@@ -1,8 +1,18 @@
 import osproc, strutils, json, os, httpclient, sequtils
-# proc checkRequirements() = 
-  
 
-# download metadata
+proc checkRequirements() = 
+  let requirements = [
+    "youtube-dl",
+    "ffmpeg",
+  ]
+  var missingRequirement = false
+  for requirement in requirements:
+    if findExe(requirement) == "":
+      echo "[ripper] cannot find '$#' install it please" % [requirement]
+      missingRequirement = true
+  if missingRequirement:
+    quit()
+
 proc downloadMetadata(url: string): string =
   stdout.write "[ripper] downloading metadata: "
   stdout.flushFile
@@ -38,49 +48,56 @@ proc downloadThumbnail(metadata: JsonNode, albumFolder: string) =
     stdout.write "false\p"
     echo getCurrentExceptionMsg()
   
-# download audio
 proc downloadAudio(metadata: JsonNode, albumFolder: string): string =
   # downloads the audio file returns absolute path to audio file
   let url = metadata["webpage_url"].getStr()
   stdout.write "[ripper] downloading audio: "
   stdout.flushFile()
-  var returnCode = execCmd("""youtube-dl "$#" -x --audio-quality 0 --audio-format opus -o "$#/output.%(ext)s" """ % [url, albumFolder])
+  var returnCode = execCmd(
+    """youtube-dl "$#" -x --audio-quality 0 --audio-format opus -o "$#/output.%(ext)s" """ % [
+      url, albumFolder
+  ])
   if returnCode != 0:
-    # stdout.write "false\p"
-    # stdout.flushFile()
-    # echo output
     quit()
-  # else:
-    # stdout.write "true\p"
-    # stdout.flushFile()
-  return albumFolder / "output.opus"  # toSeq(walkFiles( albumFolder / "output.*"))[0]
+  return albumFolder / "output.opus"
 
-# extract tracks
+proc allChapteresNumbered(metadata: JsonNode): bool =
+  result = true
+  for chapter in metadata["chapters"]:
+    let title = chapter["title"].getStr()
+    if title.strip() == "": 
+      result = false
+      break
+    if not (title[0] in "0123456789"):
+      result = false
+      break
+
 proc extractTracks(metadata: JsonNode, albumFolder: string) = 
   echo "[ripper] extracting songs: "
   var idx = 1
+  let allNumbered = metadata.allChapteresNumbered()
   for chapter in metadata["chapters"]:
-    let title = chapter["title"].getStr()
-    # echo title
+    var title = chapter["title"].getStr().replace(" ", "_")
+    if not allNumbered:
+      title = $idx & "_-_" & title
     let cmd = """ffmpeg -i "$#"  -ss $# -to $# -c copy "$#.opus" """ % [
       albumFolder / "output.opus", 
       $chapter["start_time"].getFloat,
       $chapter["end_time"].getFloat,
-      albumFolder / $idx & "_-_" & title.replace(" ", "_")
+      albumFolder / title
     ]
     echo cmd
     echo execCmdEx(cmd).output
     idx.inc
 
-
 proc deleteOriginal(albumFolder: string) = 
   removeFile(albumFolder / "output.opus")
-
 
 when isMainModule:
   # let url = """https://www.youtube.com/watch?v=wnGSh8qP6eM"""
   # let url = """https://www.youtube.com/watch?v=2K6inwe1TwY"""
   # let url = """https://www.youtube.com/watch?v=eHZgChQpi8w"""
+  checkRequirements()
   if paramCount() == 0: quit()
   let url = paramStr(1)
   if url.strip == "": quit()
@@ -91,6 +108,3 @@ when isMainModule:
   echo metadata.downloadAudio(albumFolder)
   metadata.extractTracks(albumFolder)
   deleteOriginal(albumFolder)
-
-
-  
