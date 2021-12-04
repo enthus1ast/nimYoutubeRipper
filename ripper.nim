@@ -1,4 +1,5 @@
-import osproc, strutils, json, os, httpclient, sequtils
+import osproc, strutils, json, os, httpclient, sequtils, strformat
+import detectLine, tuilib
 
 proc checkRequirements() =
   let requirements = [
@@ -61,10 +62,10 @@ proc downloadAudio(metadata: JsonNode, albumFolder: string): string =
     quit()
   return albumFolder / "output.opus"
 
-proc allChapteresNumbered(metadata: JsonNode): bool =
+
+proc allTitlesNumbered(titles: seq[string]): bool =
   result = true
-  for chapter in metadata["chapters"]:
-    let title = chapter["title"].getStr()
+  for title in titles:
     if title.strip() == "":
       result = false
       break
@@ -72,22 +73,49 @@ proc allChapteresNumbered(metadata: JsonNode): bool =
       result = false
       break
 
-import strformat
+proc allChapteresNumbered(metadata: JsonNode): bool =
+  let list = metadata.mapIt(it["title"].getStr())
+  return allTitlesNumbered(list)
+
 func buildCmd(combinedFile, startTime, endTime, songName: string): string =
   return fmt"""ffmpeg -i "{combinedFile}"  -ss {startTime} -to {endTime} -c copy "{songName}.opus" """
 
 func convertDuration(duration: int): string =
+  ## converts duratin in seconds to "mm:ss"
   let min = duration div 60
   let sec = duration mod 60
   return fmt"{min}:{sec}"
 
 func cleanTitle(title: string): string =
-  return title.replace(" ", "_")
+  ## cleanup the title
+  result = title
+  while result.contains("  "): result = result.replace("  ", " ")
+  result = result.replace(" ", "_")
 
 func buildTitle(idx: int, title: string): string =
   return ($idx).align(2, '0') & "_-_" & title
 
-import detectLine
+proc inputManually(): seq[LineRes]  =
+  while true:
+    echo "paste here, empty newline when done:"
+    var lines = ""
+    while true:
+      var cur = stdin.readLine()
+      if cur.strip().len == 0:
+        break
+      lines.add cur & "\n"
+    echo result
+    if "happy?".askYN():
+      result = detect(lines)
+      break
+
+proc ensureNumbered(lineRess: seq[LineRes]): seq[LineRes] =
+  ## Ensure that all tracks are numbered, if not, then number them all
+  if allTitlesNumbered(lineRess): return lineRess
+  for idx, lineRes in lineRess:
+    var cur = lineRes
+    cur.name = fmt"{idx} {cur.name}"
+    result.add cur
 
 proc extractTracks(metadata: JsonNode, albumFolder: string) =
   echo "[ripper] extracting songs: "
@@ -111,11 +139,21 @@ proc extractTracks(metadata: JsonNode, albumFolder: string) =
       echo execCmdEx(cmd).output
       idx.inc
   else:
+    var lineRes: seq[LineRes]
     echo "[ripper] Metadata does not contain 'chapter' try description..."
     if not metadata.hasKey("description"):
       echo "[ripper] Metadata does not contain 'description', we are lost, sorry..."
-      quit()
-    var lineRes = detect(metadata["description"].getStr())
+      if not askYN("input manually?"):
+        quit()
+      else:
+        lineRes = inputManually()
+    else:
+      lineRes = detect(metadata["description"].getStr())
+
+    echo lineRes
+    if not "happy?".askYN():
+      lineRes = inputManually()
+
     var songInfos = build(lineRes, metadata["duration"].getInt().convertDuration())
     for songInfo in songInfos:
       let title = buildTitle(idx, songInfo.name)
